@@ -1,0 +1,73 @@
+# Pixel-River Financial - Module 5 Part 3: multi-language microservices behind NGINX
+# Order: mongo - backend - transactions - studentportfolio - nginx
+
+version: '3.8'
+
+services:
+
+  # MongoDB - Shared Database for banking data.
+  mongo:
+    image: mongo:6
+    restart: always
+    volumes:
+      - mongo_data:/data/db                  # keeps users and balances after restarts
+    healthcheck:                             # "ready" check
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Backend - Python/Flask API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    expose:
+      - "5000"                               # internal only was "5000:5000"
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/bank_app
+      - SECRET_KEY=supersecretkey
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  # Transactions - JavaScript/Express microservice as monthly transaction report as JSON
+  transactions:
+    build:
+      context: ./transactions
+      dockerfile: Dockerfile
+    expose:
+      - "3000"                               # internal only (was "3000:3000" for debugging)
+    environment:
+      - MONGO_URI=mongodb://mongo:27017
+      - PORT=3000
+    restart: on-failure                      # app exits if mongo isn't reachable, so try again
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  # Student portfolio - static HTML front end
+  studentportfolio:
+    build:
+      context: ./studentportfolio
+      dockerfile: Dockerfile
+    expose:
+      - "80"                                 # internal only was "3000:80"
+    depends_on:
+      - backend
+
+  # NGINX reverse proxy / API gateway - the only public entry point
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+      - transactions
+      - studentportfolio
+
+volumes:
+  mongo_data:
